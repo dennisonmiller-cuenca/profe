@@ -46,7 +46,7 @@ go.onclick = async function(){
     };
     dc.onopen = function(){
       s.textContent = 'En vivo. Habla con Profe.'; end.disabled = false;
-      dc.send(JSON.stringify({type:'response.create', response:{instructions:'Greet the learner warmly in one or two short sentences and ask how their day in Cuenca is going.'}}));
+      
     };
     pc.onconnectionstatechange = function(){
       if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') stop('Se corto la conexion.');
