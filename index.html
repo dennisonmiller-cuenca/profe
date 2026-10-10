@@ -16,9 +16,15 @@ button:disabled{opacity:.4}
 <audio id="a" autoplay></audio>
 <script>
 var URL_SESSION = 'https://dennisonmiller.app.n8n.cloud/webhook/profe-live/session';
+var URL_SAVE = 'https://dennisonmiller.app.n8n.cloud/webhook/profe-live/save';
 var go = document.getElementById('go'), end = document.getElementById('end'), s = document.getElementById('s'), a = document.getElementById('a');
-var pc, dc, mic;
+var pc, dc, mic, log = [];
 function stop(msg){
+  if (log.length > 1) {
+    fetch(URL_SAVE, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({transcript: log.join('\n')}), keepalive:true}).catch(function(){});
+    log = [];
+    msg = (msg || 'Conversacion terminada.') + ' Guardando lo que aprendiste...';
+  }
   if (mic) mic.getTracks().forEach(function(t){t.stop();});
   if (dc) dc.close();
   if (pc) pc.close();
@@ -32,6 +38,12 @@ go.onclick = async function(){
     mic = await navigator.mediaDevices.getUserMedia({audio:true});
     mic.getTracks().forEach(function(t){ pc.addTrack(t, mic); });
     dc = pc.createDataChannel('oai-events');
+    dc.onmessage = function(e){
+      try { var m = JSON.parse(e.data);
+        if (m.type === 'conversation.item.input_audio_transcription.completed' && m.transcript) log.push('Learner: ' + m.transcript);
+        if (m.type === 'response.output_audio_transcript.done' && m.transcript) log.push('Profe: ' + m.transcript);
+      } catch (x) {}
+    };
     dc.onopen = function(){
       s.textContent = 'En vivo. Habla con Profe.'; end.disabled = false;
       dc.send(JSON.stringify({type:'response.create', response:{instructions:'Greet the learner warmly in one or two short sentences and ask how their day in Cuenca is going.'}}));
