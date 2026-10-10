@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Profe</title>
+<style>
+body{font-family:system-ui,sans-serif;background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:16px}
+button{font-size:1.4rem;padding:22px 40px;border:0;border-radius:50px;background:#EA6C00;color:#fff;margin:10px}
+button:disabled{opacity:.4}
+#end{background:#444}
+#s{margin-top:18px;opacity:.8;min-height:1.5em}
+</style></head><body>
+<h1>Profe</h1>
+<button id="go">Hablar con Profe</button>
+<button id="end" disabled>Terminar</button>
+<p id="s">Toca el boton y habla. No hay que grabar nada.</p>
+<audio id="a" autoplay></audio>
+<script>
+var URL_SESSION = 'https://dennisonmiller.app.n8n.cloud/webhook/profe-live/session';
+var go = document.getElementById('go'), end = document.getElementById('end'), s = document.getElementById('s'), a = document.getElementById('a');
+var pc, dc, mic;
+function stop(msg){
+  if (mic) mic.getTracks().forEach(function(t){t.stop();});
+  if (dc) dc.close();
+  if (pc) pc.close();
+  go.disabled = false; end.disabled = true; s.textContent = msg || 'Conversacion terminada.';
+}
+go.onclick = async function(){
+  go.disabled = true; s.textContent = 'Conectando...';
+  try {
+    pc = new RTCPeerConnection();
+    pc.ontrack = function(e){ a.srcObject = e.streams[0]; };
+    mic = await navigator.mediaDevices.getUserMedia({audio:true});
+    mic.getTracks().forEach(function(t){ pc.addTrack(t, mic); });
+    dc = pc.createDataChannel('oai-events');
+    dc.onopen = function(){
+      s.textContent = 'En vivo. Habla con Profe.'; end.disabled = false;
+      dc.send(JSON.stringify({type:'response.create', response:{instructions:'Greet the learner warmly in one or two short sentences and ask how their day in Cuenca is going.'}}));
+    };
+    pc.onconnectionstatechange = function(){
+      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') stop('Se corto la conexion.');
+    };
+    var offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    var r = await fetch(URL_SESSION, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sdp: offer.sdp})});
+    if (!r.ok) throw new Error('Session error ' + r.status);
+    var answer = await r.text();
+    await pc.setRemoteDescription({type:'answer', sdp: answer});
+  } catch (err) { stop('Error: ' + err.message); }
+};
+end.onclick = function(){ stop(); };
+</script></body></html>
