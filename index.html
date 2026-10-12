@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Profe · Spanish practice</title>
 <style>
-:root{font-family:system-ui,sans-serif;color-scheme:dark}body{background:#10141b;color:#f5f7fb;margin:0;padding:24px}main{max-width:650px;margin:7vh auto}h1{font-size:3rem;margin:0}p{line-height:1.6;color:#cbd5e1}input,button{font:inherit;padding:14px;border-radius:12px;margin:6px 4px 6px 0}input{background:#202734;color:white;border:1px solid #536072;max-width:90%}button{background:#f58220;color:#10141b;border:0;font-weight:700;cursor:pointer}button.secondary{background:#344155;color:white}button:disabled{opacity:.4}#teacher{font-size:1.45rem;line-height:1.5;margin-top:22px}#learner{color:#aab9ce;margin-top:14px}section{margin-top:30px}small{color:#aab9ce}
+:root{font-family:system-ui,sans-serif;color-scheme:dark}body{background:#10141b;color:#f5f7fb;margin:0;padding:24px}main{max-width:650px;margin:7vh auto}h1{font-size:3rem;margin:0}p{line-height:1.6;color:#cbd5e1}input,button{font:inherit;padding:14px;border-radius:12px;margin:6px 4px 6px 0}input{background:#202734;color:white;border:1px solid #536072;max-width:90%}button{background:#f58220;color:#10141b;border:0;font-weight:700;cursor:pointer}button.secondary{background:#344155;color:white}button:disabled{opacity:.4}#teacher{font-size:1.45rem;line-height:1.5;margin-top:22px}#learner{color:#aab9ce;margin-top:14px}section{margin-top:30px}#avatarStage{width:100%;max-width:420px;height:340px;margin:16px auto;border-radius:22px;overflow:hidden;background:radial-gradient(circle at 50% 30%,#394b63,#131c29);position:relative}#avatarStage canvas{display:block;width:100%;height:100%}#avatarStage[hidden]{display:none}small{color:#aab9ce}
 </style></head><body><div id="app">Loading Profe…</div>
 <script type="module">
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
@@ -9,6 +9,7 @@ const db=createClient('https://byahpjoizwcwgccufisi.supabase.co','sb_publishable
 const app=document.querySelector('#app');
 
 let profile,pc,dc,mic,sessionId,log=[];
+let avatarEnabled=false,avatarCleanup=null,avatarAudioContext=null,avatarAnalyser=null;
 let recoveryMode=new URLSearchParams(location.hash.slice(1)).get('type')==='recovery';
 db.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;queueMicrotask(()=>render().catch(console.error));}});
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
@@ -30,19 +31,45 @@ async function render(){
  if(error)throw error;
  if(!p){const result=await db.from('profe_learners').insert({auth_user_id:user.id,display_name:user.user_metadata?.name||user.email.split('@')[0],goals:['Practical daily Spanish'],preferences:{support_language:'English when needed'}}).select().single();if(result.error)throw result.error;p=result.data}
  profile=p;
- app.innerHTML='<main><header><h1>Profe 🎙️</h1><p>Hola, '+esc(p.display_name)+'. Ready to practice?</p><button class="secondary" id="rename">Preferred name</button><button class="secondary" id="language">Feedback settings</button><button class="secondary" id="logout">Sign out</button></header><section><button id="start">Start speaking</button><button class="secondary" id="end" disabled>End session</button><p id="status" role="status">Ready.</p><audio id="audio" autoplay></audio><div id="teacher" aria-live="polite"></div><div id="learner"></div></section><section><h2>Your learning plan</h2><p id="lessonplan"></p><h3>Recent feedback</h3><p id="progressnotes"></p><small>Transcripts are saved privately. Learning analysis is being introduced progressively.</small></section></main>';
+ app.innerHTML='<main><header><h1>Profe 🎙️</h1><p>Hola, '+esc(p.display_name)+'. Ready to practice?</p><button class="secondary" id="rename">Preferred name</button><button class="secondary" id="language">Feedback settings</button><button class="secondary" id="avatarToggle">Show 3D teacher</button><button class="secondary" id="logout">Sign out</button></header><section><button id="start">Start speaking</button><button class="secondary" id="end" disabled>End session</button><p id="status" role="status">Ready.</p><div id="avatarStage" hidden aria-label="Animated 3D female teacher"></div><audio id="audio" autoplay></audio><div id="teacher" aria-live="polite"></div><div id="learner"></div></section><section><h2>Your learning plan</h2><p id="lessonplan"></p><h3>Recent feedback</h3><p id="progressnotes"></p><small>Transcripts are saved privately. Learning analysis is being introduced progressively.</small></section></main>';
  document.querySelector('#rename').onclick=async()=>{const name=prompt('What should Profe call you?',profile.display_name);if(!name?.trim())return;const clean=name.trim().slice(0,60);const {error}=await db.from('profe_learners').update({display_name:clean,preferences:{...profile.preferences,preferred_name:clean}}).eq('id',profile.id);if(error)status('Could not save name: '+error.message);else{profile.display_name=clean;status('Saved. Profe will call you '+clean+' next session.');document.querySelector('header p').textContent='Hola, '+clean+'. Ready to practice?';}};
  document.querySelector('#language').onclick=async()=>{const english=confirm('Press OK for short English feedback, or Cancel for Spanish feedback.');const preferences={...profile.preferences,feedback_language:english?'English':'Spanish',short_feedback:true};const {error}=await db.from('profe_learners').update({preferences}).eq('id',profile.id);if(error)status('Could not save: '+error.message);else{profile.preferences=preferences;status('Saved for future sessions.')}};
+ document.querySelector('#avatarToggle').onclick=async()=>{avatarEnabled=!avatarEnabled;const btn=document.querySelector('#avatarToggle'),stage=document.querySelector('#avatarStage');btn.textContent=avatarEnabled?'Hide 3D teacher':'Show 3D teacher';stage.hidden=!avatarEnabled;if(avatarEnabled){try{await initAvatar(stage)}catch(e){avatarEnabled=false;stage.hidden=true;btn.textContent='Show 3D teacher';status('3D preview unavailable: '+e.message)}}else if(avatarCleanup){avatarCleanup();avatarCleanup=null}};
  document.querySelector('#logout').onclick=async()=>{await stop();await db.auth.signOut();await render()};
  document.querySelector('#lessonplan').textContent=profile.next_lesson?.focus||'Review previously practiced phrases, then practice practical Spanish for daily life.';document.querySelector('#progressnotes').textContent=profile.ability_summary?.last_feedback||'Your progress notes will appear here after lesson analysis is enabled.';
  document.querySelector('#start').onclick=start;document.querySelector('#end').onclick=()=>stop();
 }
+
+async function initAvatar(stage){
+ if(avatarCleanup){avatarCleanup();avatarCleanup=null}
+ const THREE=await import('https://esm.sh/three@0.180.0');
+ if(!avatarEnabled)return;
+ const scene=new THREE.Scene();const camera=new THREE.PerspectiveCamera(36,stage.clientWidth/stage.clientHeight,.1,100);camera.position.set(0,.25,7.2);
+ const renderer=new THREE.WebGLRenderer({antialias:true,alpha:true});renderer.setPixelRatio(Math.min(devicePixelRatio,2));renderer.setSize(stage.clientWidth,stage.clientHeight);renderer.outputColorSpace=THREE.SRGBColorSpace;stage.appendChild(renderer.domElement);
+ scene.add(new THREE.HemisphereLight(0xffffff,0x566078,2.1));const key=new THREE.DirectionalLight(0xffe7d2,2.7);key.position.set(-3,5,6);scene.add(key);
+ const mat=(color,roughness=.8)=>new THREE.MeshStandardMaterial({color,roughness});
+ const skin=mat(0xc98e6f),hair=mat(0x30201b),top=mat(0x496f82),white=mat(0xfffaf3),iris=mat(0x59432c),black=mat(0x1d1515),lips=mat(0x87484c);
+ const group=new THREE.Group();scene.add(group);
+ function ell(parent,m,x,y,z,sx,sy,sz){const mesh=new THREE.Mesh(new THREE.SphereGeometry(1,32,24),m);mesh.position.set(x,y,z);mesh.scale.set(sx,sy,sz);parent.add(mesh);return mesh}
+ ell(group,top,0,-1.85,0,1.32,1.12,.64);ell(group,skin,0,-.98,.28,.29,.45,.28);
+ ell(group,hair,0,.46,-.21,.99,1.44,.69);ell(group,skin,0,.48,.27,.83,1.06,.69);
+ ell(group,hair,0,1.35,.20,.88,.35,.66);ell(group,hair,-.79,.25,.06,.23,1.13,.47);ell(group,hair,.79,.25,.06,.23,1.13,.47);
+ for(const x of [-.34,.34]){ell(group,white,x,.68,.878,.19,.135,.065);ell(group,iris,x,.68,.935,.095,.104,.03);ell(group,black,x,.68,.964,.052,.069,.025);ell(group,hair,x,.91,.88,.23,.042,.05)}
+ ell(group,skin,0,.27,.92,.14,.25,.16);ell(group,lips,0,-.14,.866,.32,.09,.045);
+ const mouth=ell(group,mat(0x381c26),0,-.155,.913,.23,.035,.035);ell(group,lips,0,-.24,.9,.28,.045,.042);
+ const blinkL=ell(group,skin,-.34,.69,.945,.20,.012,.07),blinkR=ell(group,skin,.34,.69,.945,.20,.012,.07);
+ const clock=new THREE.Clock(),wave=new Uint8Array(256);let active=true;
+ function draw(){if(!active)return;const t=clock.getElapsedTime();let level=0;if(avatarAnalyser){avatarAnalyser.getByteTimeDomainData(wave);let sum=0;for(const v of wave){const a=(v-128)/128;sum+=a*a}level=Math.sqrt(sum/wave.length)}const opening=Math.min(.25,Math.max(.018,(level-.012)*2.7));mouth.scale.y=.035+opening;mouth.position.y=-.16-opening*.15;group.rotation.y=Math.sin(t*.55)*.045;group.rotation.x=Math.sin(t*.8)*.018;const blink=Math.sin(t*1.37)> .995 ? .11: .012;blinkL.scale.y=blink;blinkR.scale.y=blink;renderer.render(scene,camera)}
+ renderer.setAnimationLoop(draw);
+ avatarCleanup=()=>{active=false;renderer.setAnimationLoop(null);renderer.dispose();stage.replaceChildren()};
+}
+
 async function start(){
  document.querySelector('#start').disabled=true;log=[];status('Connecting…');
  try{
  const {data:{session}}=await db.auth.getSession();if(!session)throw Error('Please sign in again');
  const {data:s,error}=await db.from('profe_sessions').insert({learner_id:profile.id,topic:'Voice practice'}).select('id').single();if(error)throw error;sessionId=s.id;
- pc=new RTCPeerConnection();pc.ontrack=e=>document.querySelector('#audio').srcObject=e.streams[0];
+ pc=new RTCPeerConnection();pc.ontrack=e=>{document.querySelector('#audio').srcObject=e.streams[0];if(avatarAudioContext){avatarAudioContext.close().catch(()=>{});avatarAudioContext=null;avatarAnalyser=null}try{avatarAudioContext=new AudioContext();const src=avatarAudioContext.createMediaStreamSource(e.streams[0]);avatarAnalyser=avatarAudioContext.createAnalyser();avatarAnalyser.fftSize=512;src.connect(avatarAnalyser);avatarAudioContext.resume().catch(()=>{})}catch(err){console.warn('Avatar audio meter unavailable',err)}};
  mic=await navigator.mediaDevices.getUserMedia({audio:true});mic.getTracks().forEach(t=>pc.addTrack(t,mic));
  dc=pc.createDataChannel('oai-events');dc.onmessage=e=>{try{const m=JSON.parse(e.data);
  if(m.type==='response.created')document.querySelector('#teacher').textContent='';
@@ -62,7 +89,7 @@ async function start(){
  }catch(e){await stop('Error: '+e.message)}
 }
 async function stop(message='Session ended.'){
- if(mic)mic.getTracks().forEach(t=>t.stop());if(dc)dc.close();if(pc)pc.close();mic=dc=pc=null;
+ if(mic)mic.getTracks().forEach(t=>t.stop());if(dc)dc.close();if(pc)pc.close();mic=dc=pc=null;if(avatarAudioContext){avatarAudioContext.close().catch(()=>{});avatarAudioContext=null;avatarAnalyser=null}
  const id=sessionId;sessionId=null;
  if(id){const {error}=await db.from('profe_sessions').update({ended_at:new Date().toISOString(),transcript:log.join('\n')}).eq('id',id);if(error)message+=' Transcript save failed: '+error.message;else if(log.join('').length>60){message+=' Analyzing your practice…';try{const {data:{session}}=await db.auth.getSession();const result=await fetch('https://byahpjoizwcwgccufisi.supabase.co/functions/v1/profe-voice-token',{method:'POST',headers:{'Content-Type':'application/json',apikey:'sb_publishable_l1IehA77G_uSWEtkqpBj3A_-LIIYv9g',Authorization:'Bearer '+session.access_token},body:JSON.stringify({action:'analyze',session_id:id})});const analysis=await result.json();if(!result.ok)message+=' Analysis pending: '+(analysis.error||'Unavailable');else{message='Session saved and analyzed. '+analysis.summary;const plan=document.querySelector('#lessonplan'),notes=document.querySelector('#progressnotes');if(plan)plan.textContent=analysis.next_lesson?.focus||'';if(notes)notes.textContent=analysis.progress?.feedback||''}}catch(e){message+=' Analysis unavailable: '+e.message}}}
  const start=document.querySelector('#start');if(start){start.disabled=false;document.querySelector('#end').disabled=true;status(message)}
