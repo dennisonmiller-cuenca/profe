@@ -64,7 +64,7 @@ async function start(){
 async function stop(message='Session ended.'){
  if(mic)mic.getTracks().forEach(t=>t.stop());if(dc)dc.close();if(pc)pc.close();mic=dc=pc=null;
  const id=sessionId;sessionId=null;
- if(id){const {error}=await db.from('profe_sessions').update({ended_at:new Date().toISOString(),transcript:log.join('\n')}).eq('id',id);if(error)message+=' Transcript save failed: '+error.message}
+ if(id){const {error}=await db.from('profe_sessions').update({ended_at:new Date().toISOString(),transcript:log.join('\n')}).eq('id',id);if(error)message+=' Transcript save failed: '+error.message;else if(log.join('').length>60){message+=' Analyzing your practice…';try{const {data:{session}}=await db.auth.getSession();const result=await fetch('https://byahpjoizwcwgccufisi.supabase.co/functions/v1/profe-voice-token',{method:'POST',headers:{'Content-Type':'application/json',apikey:'sb_publishable_l1IehA77G_uSWEtkqpBj3A_-LIIYv9g',Authorization:'Bearer '+session.access_token},body:JSON.stringify({action:'analyze',session_id:id})});const analysis=await result.json();if(!result.ok)message+=' Analysis pending: '+(analysis.error||'Unavailable');else{message='Session saved and analyzed. '+analysis.summary;const plan=document.querySelector('#lessonplan'),notes=document.querySelector('#progressnotes');if(plan)plan.textContent=analysis.next_lesson?.focus||'';if(notes)notes.textContent=analysis.progress?.feedback||''}}catch(e){message+=' Analysis unavailable: '+e.message}}}
  const start=document.querySelector('#start');if(start){start.disabled=false;document.querySelector('#end').disabled=true;status(message)}
 }
 render().catch(e=>app.innerHTML='<main><h1>Profe</h1><p>'+esc(e.message)+'</p></main>');
