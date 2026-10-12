@@ -1,66 +1,55 @@
 <!doctype html>
-<html lang="es"><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Profe</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Profe · Spanish practice</title>
 <style>
-body{font-family:system-ui,sans-serif;background:#111;color:#fff;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center;padding:16px}
-button{font-size:1.4rem;padding:22px 40px;border:0;border-radius:50px;background:#EA6C00;color:#fff;margin:10px}
-button:disabled{opacity:.4}
-#end{background:#444}
-#s{margin-top:18px;opacity:.8;min-height:1.5em}
-#sub{margin-top:24px;max-width:640px;font-size:1.5rem;line-height:1.4;min-height:4em}
-#me{margin-top:12px;max-width:640px;font-size:1rem;opacity:.6;min-height:1.5em}
-</style></head><body>
-<h1>Profe</h1>
-<button id="go">Hablar con Profe</button>
-<button id="end" disabled>Terminar</button>
-<p id="s">Toca el boton y habla. No hay que grabar nada.</p>
-<div id="sub"></div>
-<div id="me"></div>
-<audio id="a" autoplay></audio>
-<script>
-var URL_SESSION = 'https://dennisonmiller.app.n8n.cloud/webhook/profe-live/session';
-var URL_SAVE = 'https://dennisonmiller.app.n8n.cloud/webhook/profe-live/save';
-var go = document.getElementById('go'), end = document.getElementById('end'), s = document.getElementById('s'), a = document.getElementById('a');
-var sub = document.getElementById('sub'), me = document.getElementById('me');
-var pc, dc, mic, log = [];
-function stop(msg){
-  if (log.length > 1) { fetch(URL_SAVE, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({transcript: log.join('\n')}), keepalive:true}).catch(function(){}); log = []; }
-  if (mic) mic.getTracks().forEach(function(t){t.stop();});
-  if (dc) dc.close();
-  if (pc) pc.close();
-  go.disabled = false; end.disabled = true; s.textContent = msg || 'Conversacion terminada.';
+:root{font-family:system-ui,sans-serif;color-scheme:dark}body{background:#10141b;color:#f5f7fb;margin:0;padding:24px}main{max-width:650px;margin:7vh auto}h1{font-size:3rem;margin:0}p{line-height:1.6;color:#cbd5e1}input,button{font:inherit;padding:14px;border-radius:12px;margin:6px 4px 6px 0}input{background:#202734;color:white;border:1px solid #536072;max-width:90%}button{background:#f58220;color:#10141b;border:0;font-weight:700;cursor:pointer}button.secondary{background:#344155;color:white}button:disabled{opacity:.4}#teacher{font-size:1.45rem;line-height:1.5;margin-top:22px}#learner{color:#aab9ce;margin-top:14px}section{margin-top:30px}small{color:#aab9ce}
+</style></head><body><div id="app">Loading Profe…</div>
+<script type="module">
+import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
+const db=createClient('https://byahpjoizwcwgccufisi.supabase.co','sb_publishable_l1IehA77G_uSWEtkqpBj3A_-LIIYv9g');
+const app=document.querySelector('#app');
+let profile,pc,dc,mic,sessionId,log=[];
+const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+const status=x=>{const e=document.querySelector('#status');if(e)e.textContent=x};
+async function render(){
+ const {data:{user},error:authError}=await db.auth.getUser();
+ if(!user){
+ app.innerHTML='<main><h1>Profe 🎙️</h1><p>Practical Ecuadorian Spanish, at your pace.</p><form id="auth"><input id="email" type="email" placeholder="Email" required><input id="password" type="password" minlength="6" placeholder="Password" required><div><button type="submit" name="action" value="login">Sign in</button><button type="submit" name="action" value="signup" class="secondary">Create account</button></div></form><p id="status" role="status"></p></main>';
+ document.querySelector('#auth').onsubmit=async e=>{e.preventDefault();const email=document.querySelector('#email').value,password=document.querySelector('#password').value;const signup=e.submitter?.value==='signup';const {error}=signup?await db.auth.signUp({email,password}):await db.auth.signInWithPassword({email,password});if(error)status(error.message);else if(signup)status('Check your email for confirmation, then sign in.');else await render()};return;
+ }
+ let {data:p,error}=await db.from('profe_learners').select('*').eq('auth_user_id',user.id).maybeSingle();
+ if(error)throw error;
+ if(!p){const result=await db.from('profe_learners').insert({auth_user_id:user.id,display_name:user.user_metadata?.name||user.email.split('@')[0],goals:['Practical daily Spanish'],preferences:{support_language:'English when needed'}}).select().single();if(result.error)throw result.error;p=result.data}
+ profile=p;
+ app.innerHTML='<main><header><h1>Profe 🎙️</h1><p>Hola, '+esc(p.display_name)+'. Ready to practice?</p><button class="secondary" id="logout">Sign out</button></header><section><button id="start">Start speaking</button><button class="secondary" id="end" disabled>End session</button><p id="status" role="status">Ready.</p><audio id="audio" autoplay></audio><div id="teacher" aria-live="polite"></div><div id="learner"></div></section><section><small>Your practice transcript is saved to your private Supabase profile when you end the session. Adaptive progress analysis is not yet enabled.</small></section></main>';
+ document.querySelector('#logout').onclick=async()=>{await stop();await db.auth.signOut();await render()};
+ document.querySelector('#start').onclick=start;document.querySelector('#end').onclick=()=>stop();
 }
-go.onclick = async function(){
-  go.disabled = true; s.textContent = 'Conectando...'; sub.textContent = ''; me.textContent = '';
-  try {
-    pc = new RTCPeerConnection();
-    pc.ontrack = function(e){ a.srcObject = e.streams[0]; };
-    mic = await navigator.mediaDevices.getUserMedia({audio:true});
-    mic.getTracks().forEach(function(t){ pc.addTrack(t, mic); });
-    dc = pc.createDataChannel('oai-events');
-    dc.onmessage = function(e){
-      try { var m = JSON.parse(e.data);
-        if (m.type === 'response.created') sub.textContent = '';
-        if (m.type === 'response.output_audio_transcript.delta' && m.delta) sub.textContent += m.delta;
-        if (m.type === 'response.output_audio_transcript.done' && m.transcript) { log.push('Profe: ' + m.transcript); sub.textContent = m.transcript; }
-        if (m.type === 'conversation.item.input_audio_transcription.completed' && m.transcript) { log.push('Learner: ' + m.transcript); me.textContent = 'Tu: ' + m.transcript; }
-      } catch (x) {}
-    };
-    dc.onopen = function(){
-      s.textContent = 'En vivo. Habla con Profe.'; end.disabled = false;
-      dc.send(JSON.stringify({type:'response.create'}));
-    };
-    pc.onconnectionstatechange = function(){
-      if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') stop('Se corto la conexion.');
-    };
-    var offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    var r = await fetch(URL_SESSION, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({sdp: offer.sdp})});
-    if (!r.ok) throw new Error('Session error ' + r.status);
-    var answer = await r.text();
-    await pc.setRemoteDescription({type:'answer', sdp: answer});
-  } catch (err) { stop('Error: ' + err.message); }
-};
-end.onclick = function(){ stop(); };
+async function start(){
+ document.querySelector('#start').disabled=true;log=[];status('Connecting…');
+ try{
+ const {data:{session}}=await db.auth.getSession();if(!session)throw Error('Please sign in again');
+ const {data:s,error}=await db.from('profe_sessions').insert({learner_id:profile.id,topic:'Voice practice'}).select('id').single();if(error)throw error;sessionId=s.id;
+ pc=new RTCPeerConnection();pc.ontrack=e=>document.querySelector('#audio').srcObject=e.streams[0];
+ mic=await navigator.mediaDevices.getUserMedia({audio:true});mic.getTracks().forEach(t=>pc.addTrack(t,mic));
+ dc=pc.createDataChannel('oai-events');dc.onmessage=e=>{try{const m=JSON.parse(e.data);
+ if(m.type==='response.created')document.querySelector('#teacher').textContent='';
+ if(m.type==='response.output_audio_transcript.delta')document.querySelector('#teacher').textContent+=m.delta||'';
+ if(m.type==='response.output_audio_transcript.done'&&m.transcript){log.push('Profe: '+m.transcript);document.querySelector('#teacher').textContent=m.transcript}
+ if(m.type==='conversation.item.input_audio_transcription.completed'&&m.transcript){log.push('Learner: '+m.transcript);document.querySelector('#learner').textContent='You: '+m.transcript}
+ }catch{}};
+ dc.onopen=()=>{status('Live. Speak naturally. Ask Profe to slow down whenever needed.');document.querySelector('#end').disabled=false;dc.send(JSON.stringify({type:'response.create'}))};
+ pc.onconnectionstatechange=()=>{if(pc?.connectionState==='failed')stop('Connection failed')};
+ await pc.setLocalDescription(await pc.createOffer());
+ const response=await fetch('/api/realtime/session',{method:'POST',headers:{'Content-Type':'application/sdp',Authorization:'Bearer '+session.access_token},body:pc.localDescription.sdp});
+ if(!response.ok)throw Error((await response.text()).slice(0,200));
+ await pc.setRemoteDescription({type:'answer',sdp:await response.text()});
+ }catch(e){await stop('Error: '+e.message)}
+}
+async function stop(message='Session ended.'){
+ if(mic)mic.getTracks().forEach(t=>t.stop());if(dc)dc.close();if(pc)pc.close();mic=dc=pc=null;
+ const id=sessionId;sessionId=null;
+ if(id){const {error}=await db.from('profe_sessions').update({ended_at:new Date().toISOString(),transcript:log.join('\n')}).eq('id',id);if(error)message+=' Transcript save failed: '+error.message}
+ const start=document.querySelector('#start');if(start){start.disabled=false;document.querySelector('#end').disabled=true;status(message)}
+}
+render().catch(e=>app.innerHTML='<main><h1>Profe</h1><p>'+esc(e.message)+'</p></main>');
 </script></body></html>
