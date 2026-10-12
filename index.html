@@ -9,13 +9,22 @@ const db=createClient('https://byahpjoizwcwgccufisi.supabase.co','sb_publishable
 const app=document.querySelector('#app');
 
 let profile,pc,dc,mic,sessionId,log=[];
+let recoveryMode=new URLSearchParams(location.hash.slice(1)).get('type')==='recovery';
+db.auth.onAuthStateChange((event)=>{if(event==='PASSWORD_RECOVERY'){recoveryMode=true;queueMicrotask(()=>render().catch(console.error));}});
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const status=x=>{const e=document.querySelector('#status');if(e)e.textContent=x};
 async function render(){
+ if(recoveryMode){
+  const {data:{session}}=await db.auth.getSession();
+  if(!session){app.innerHTML='<main><h1>Reset password</h1><p>This reset link is invalid or has expired. Return to Profe and request a new link.</p><button id="back">Back to sign in</button></main>';document.querySelector('#back').onclick=()=>{recoveryMode=false;history.replaceState(null,'',location.pathname);render()};return;}
+  app.innerHTML='<main><h1>Choose a new password</h1><p>Enter a new password for your Profe account.</p><form id="reset"><input type="password" id="newpass" minlength="8" autocomplete="new-password" placeholder="New password (8+ characters)" required><input type="password" id="confirm" minlength="8" autocomplete="new-password" placeholder="Confirm new password" required><button type="submit">Save new password</button></form><p id="status" role="status"></p></main>';
+  document.querySelector('#reset').onsubmit=async e=>{e.preventDefault();const password=document.querySelector('#newpass').value;if(password!==document.querySelector('#confirm').value){status('Passwords do not match.');return}const {error}=await db.auth.updateUser({password});if(error){status(error.message);return}recoveryMode=false;history.replaceState(null,'',location.pathname);await db.auth.signOut();await render();status('Password updated. Sign in with your new password.')};return;
+ }
  const {data:{user},error:authError}=await db.auth.getUser();
  if(!user){
- app.innerHTML='<main><h1>Profe 🎙️</h1><p>Practical Ecuadorian Spanish, at your pace.</p><form id="auth"><input id="email" type="email" placeholder="Email" required><input id="password" type="password" minlength="6" placeholder="Password" required><div><button type="submit" name="action" value="login">Sign in</button><button type="submit" name="action" value="signup" class="secondary">Create account</button></div></form><p id="status" role="status"></p></main>';
- document.querySelector('#auth').onsubmit=async e=>{e.preventDefault();const email=document.querySelector('#email').value,password=document.querySelector('#password').value;const signup=e.submitter?.value==='signup';const {error}=signup?await db.auth.signUp({email,password}):await db.auth.signInWithPassword({email,password});if(error)status(error.message);else if(signup)status('Check your email for confirmation, then sign in.');else await render()};return;
+ app.innerHTML='<main><h1>Profe 🎙️</h1><p>Practical Ecuadorian Spanish, at your pace.</p><form id="auth"><input id="email" type="email" placeholder="Email" required><input id="password" type="password" minlength="6" placeholder="Password" required><div><button type="submit" name="action" value="login">Sign in</button><button type="submit" name="action" value="signup" class="secondary">Create account</button></div></form><button id="forgot" type="button" class="secondary">Forgot password or login email?</button><p id="status" role="status"></p></main>';
+ document.querySelector('#forgot').onclick=async()=>{const email=document.querySelector('#email').value.trim()||prompt('Enter the email address used for your Profe account:');if(!email)return;const {error}=await db.auth.resetPasswordForEmail(email,{redirectTo:location.origin+location.pathname});if(error)status('Could not request reset: '+error.message);else status('If an account exists for that email, a password reset link will be sent. Check your inbox and spam folder. If you forgot which email you used, check your past Profe confirmation emails or contact support.');};
+ document.querySelector('#auth').onsubmit=async e=>{e.preventDefault();const email=document.querySelector('#email').value,password=document.querySelector('#password').value;const signup=e.submitter?.value==='signup';const {error}=signup?await db.auth.signUp({email,password,options:{emailRedirectTo:location.origin+location.pathname}}):await db.auth.signInWithPassword({email,password});if(error)status(error.message);else if(signup)status('Check your email for confirmation, then sign in.');else await render()};return;
  }
  let {data:p,error}=await db.from('profe_learners').select('*').eq('auth_user_id',user.id).maybeSingle();
  if(error)throw error;
