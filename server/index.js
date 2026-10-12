@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import express from 'express';
+import {fileURLToPath} from 'node:url';
+import path from 'node:path';
 import {createClient} from '@supabase/supabase-js';
 const app=express();
 const url=process.env.SUPABASE_URL||'https://byahpjoizwcwgccufisi.supabase.co';
@@ -24,5 +26,5 @@ app.post('/api/realtime/session',express.text({type:'application/sdp',limit:'100
   res.type('application/sdp').send(await result.text());
  }catch(e){console.error(e);res.status(500).send('Session failed')}
 });
-app.use(express.static('public'));
+app.get('/',(req,res)=>res.sendFile(path.resolve(path.dirname(fileURLToPath(import.meta.url)),'../index.html')));
 app.listen(process.env.PORT||3001,()=>console.log('Profe server listening'));
