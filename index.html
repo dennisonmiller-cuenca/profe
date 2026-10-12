@@ -7,6 +7,7 @@
 import {createClient} from 'https://esm.sh/@supabase/supabase-js@2';
 const db=createClient('https://byahpjoizwcwgccufisi.supabase.co','sb_publishable_l1IehA77G_uSWEtkqpBj3A_-LIIYv9g');
 const app=document.querySelector('#app');
+const isPages=location.hostname.endsWith('github.io');
 let profile,pc,dc,mic,sessionId,log=[];
 const esc=x=>String(x??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 const status=x=>{const e=document.querySelector('#status');if(e)e.textContent=x};
@@ -21,10 +22,12 @@ async function render(){
  if(!p){const result=await db.from('profe_learners').insert({auth_user_id:user.id,display_name:user.user_metadata?.name||user.email.split('@')[0],goals:['Practical daily Spanish'],preferences:{support_language:'English when needed'}}).select().single();if(result.error)throw result.error;p=result.data}
  profile=p;
  app.innerHTML='<main><header><h1>Profe 🎙️</h1><p>Hola, '+esc(p.display_name)+'. Ready to practice?</p><button class="secondary" id="logout">Sign out</button></header><section><button id="start">Start speaking</button><button class="secondary" id="end" disabled>End session</button><p id="status" role="status">Ready.</p><audio id="audio" autoplay></audio><div id="teacher" aria-live="polite"></div><div id="learner"></div></section><section><small>Your practice transcript is saved to your private Supabase profile when you end the session. Adaptive progress analysis is not yet enabled.</small></section></main>';
+ if(isPages){document.querySelector('#start').disabled=true;status('GitHub Pages test mode: accounts and memory enabled; voice requires backend.');}
  document.querySelector('#logout').onclick=async()=>{await stop();await db.auth.signOut();await render()};
  document.querySelector('#start').onclick=start;document.querySelector('#end').onclick=()=>stop();
 }
 async function start(){
+ if(location.hostname.endsWith('github.io')){status('Voice requires a secure backend. GitHub Pages testing currently supports sign-in and learner memory.');return;}
  document.querySelector('#start').disabled=true;log=[];status('Connecting…');
  try{
  const {data:{session}}=await db.auth.getSession();if(!session)throw Error('Please sign in again');
